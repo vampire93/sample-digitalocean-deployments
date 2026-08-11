@@ -22,8 +22,14 @@ services:
 
     image:
       registry_type: DOCR
+      # Omit `registry:` and doctl infers it when the account has one registry.
+      # Set it explicitly once you have more than one.
       repository: jobs-api
       tag: v1
+      # Push to this tag and App Platform redeploys on its own — measured at ~10s.
+      # It watches the TAG, not the digest, so re-pushing :v1 is enough.
+      deploy_on_push:
+        enabled: true
 
     # The API's own routes already begin with /api, so the prefix must survive the
     # platform's routing. Without preserve_path_prefix the app receives /jobs and
@@ -74,6 +80,8 @@ services:
       registry_type: DOCR
       repository: jobs-web
       tag: v1
+      deploy_on_push:
+        enabled: true
 
     routes:
       - path: /

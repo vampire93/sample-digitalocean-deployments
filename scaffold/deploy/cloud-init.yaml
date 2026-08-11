@@ -1,51 +1,40 @@
 #cloud-config
-# Fallback deploy path: a single Droplet that builds and runs the stack on first boot.
+# First-boot provisioning for the Droplet fallback path.
 #
-#   doctl compute droplet create demo --region blr1 --size s-2vcpu-4gb \
-#     --image docker-20-04 --ssh-keys <fingerprint> \
-#     --user-data-file deploy/cloud-init.yaml --wait
+# Deliberately does NOT pull from a container registry. The point of this path is
+# to have zero dependency on the registry, the image build, or a git remote — so
+# it stays available when the App Platform route is the thing that's broken.
+# Source is rsync'd up and built on the box instead. See deploy-droplet.sh.
 #
-# Up in ~4 minutes with no registry and no git remote. Trade-off: bare HTTP on the
-# Droplet's IP (no TLS), and you own patching and restarts.
+# Pair with the `docker-20-04` marketplace image, which ships Docker and the
+# compose plugin already; the package steps below are a safety net for a plain
+# Ubuntu image.
 
 package_update: true
+package_upgrade: false
+
+packages:
+  - docker.io
+  - docker-compose-plugin
 
 write_files:
-  - path: /opt/app/docker-compose.yml
+  - path: /etc/docker/daemon.json
     content: |
-      services:
-        db:
-          image: postgres:16-alpine
-          environment:
-            POSTGRES_USER: postgres
-            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-            POSTGRES_DB: jobs
-          volumes: ["pgdata:/var/lib/postgresql/data"]
-          healthcheck:
-            test: ["CMD-SHELL", "pg_isready -U postgres -d jobs"]
-            interval: 3s
-            retries: 10
-        api:
-          image: registry.digitalocean.com/REPLACE_ME/jobs-api:v1
-          environment:
-            DATABASE_URL: postgresql://postgres:postgres@db:5432/jobs
-            ENV: production
-            WORKER_ENABLED: "true"
-          depends_on:
-            db: {condition: service_healthy}
-          restart: always
-        web:
-          image: registry.digitalocean.com/REPLACE_ME/jobs-web:v1
-          ports: ["80:80"]
-          depends_on: [api]
-          restart: always
-      volumes:
-        pgdata:
+      { "log-driver": "json-file", "log-opts": { "max-size": "10m", "max-file": "3" } }
+    # Without log rotation a chatty container will fill the disk and take the
+    # whole box down. One line, and it prevents a genuinely bad afternoon.
 
 runcmd:
-  # The docker-20-04 marketplace image already has Docker and Compose.
-  - [ sh, -c, "cd /opt/app && docker compose up -d" ]
-  # Keep SSH reachable — locking yourself out of the only box is a bad afternoon.
+  - [ systemctl, enable, --now, docker ]
+  - [ mkdir, -p, /srv/app ]
+  # Keep SSH open BEFORE enabling the firewall, or you lock yourself out of the
+  # only machine you have.
   - [ ufw, allow, "22/tcp" ]
   - [ ufw, allow, "80/tcp" ]
+  - [ ufw, allow, "443/tcp" ]
+  - [ ufw, allow, "8000/tcp" ]
+  - [ ufw, allow, "5173/tcp" ]
   - [ ufw, --force, enable ]
+  # Marker file the deploy script polls, so it knows provisioning finished
+  # rather than guessing with a sleep.
+  - [ sh, -c, "touch /var/lib/cloud-init-done" ]

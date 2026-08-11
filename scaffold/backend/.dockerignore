@@ -1,0 +1,15 @@
+# Never let local config reach an image layer. The Dockerfile copies only `app`
+# and `migrations`, so this is belt-and-braces — but a later `COPY . .` would
+# otherwise bake credentials into an image sitting in a registry.
+.env
+.env.*
+!.env.example
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+tests/

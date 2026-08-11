@@ -1,14 +1,22 @@
+# Every value is ${VAR:-default}. docker compose reads a sibling .env
+# automatically, so `cp .env.example .env` is enough to override any of them —
+# and with no .env at all the defaults still give a working stack.
+#
+# That balance is the point: genuinely env-driven, but `docker compose up` on a
+# fresh clone works first try with no setup step.
+
 services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: jobs
-    ports: ["5432:5432"]
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-jobs}
+    ports: ["${DB_PORT:-5432}:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d jobs"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-jobs}"]
       interval: 3s
       timeout: 3s
       retries: 10
@@ -16,12 +24,19 @@ services:
   api:
     build: ./backend
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@db:5432/jobs
-      ENV: local
-      LOG_LEVEL: INFO
-      WORKER_ENABLED: "true"
-      DEPENDENCY_FAILURE_RATE: "0.3"
-    ports: ["8000:8000"]
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@db:5432/jobs}
+      ENV: ${ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DB_POOL_MAX: ${DB_POOL_MAX:-10}
+      WORKER_ENABLED: ${WORKER_ENABLED:-true}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+      LEASE_SECONDS: ${LEASE_SECONDS:-30}
+      MAX_ATTEMPTS: ${MAX_ATTEMPTS:-4}
+      DEPENDENCY_FAILURE_RATE: ${DEPENDENCY_FAILURE_RATE:-0.3}
+      DEPENDENCY_LATENCY_MS: ${DEPENDENCY_LATENCY_MS:-300}
+      MATVIEW_REFRESH_INTERVAL_S: ${MATVIEW_REFRESH_INTERVAL_S:-10.0}
+    ports: ["${API_PORT:-8000}:8000"]
+    restart: unless-stopped
     depends_on:
       db: {condition: service_healthy}
 
@@ -31,10 +46,15 @@ services:
   worker:
     build: ./backend
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@db:5432/jobs
-      ENV: local
-      LOG_LEVEL: INFO
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@db:5432/jobs}
+      ENV: ${ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       WORKER_ENABLED: "true"
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+      LEASE_SECONDS: ${LEASE_SECONDS:-30}
+      MAX_ATTEMPTS: ${MAX_ATTEMPTS:-4}
+      DEPENDENCY_FAILURE_RATE: ${DEPENDENCY_FAILURE_RATE:-0.3}
+    restart: unless-stopped
     depends_on:
       db: {condition: service_healthy}
 
@@ -42,7 +62,8 @@ services:
   # only ever talks to one origin and there is no CORS anywhere.
   web:
     build: ./frontend
-    ports: ["5173:80"]
+    ports: ["${WEB_PORT:-5173}:80"]
+    restart: unless-stopped
     depends_on: [api]
 
 volumes:

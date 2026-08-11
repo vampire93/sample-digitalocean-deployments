@@ -1,0 +1,49 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: jobs
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d jobs"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/jobs
+      ENV: local
+      LOG_LEVEL: INFO
+      WORKER_ENABLED: "true"
+      DEPENDENCY_FAILURE_RATE: "0.3"
+    ports: ["8000:8000"]
+    depends_on:
+      db: {condition: service_healthy}
+
+  # A second replica, worker-only (no public route). Proves two things at once:
+  # the service is stateless, and FOR UPDATE SKIP LOCKED means these two never
+  # claim the same job. Scale further with: docker compose up -d --scale worker=3
+  worker:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/jobs
+      ENV: local
+      LOG_LEVEL: INFO
+      WORKER_ENABLED: "true"
+    depends_on:
+      db: {condition: service_healthy}
+
+  # nginx serves the built SPA and proxies /api to the api service, so the browser
+  # only ever talks to one origin and there is no CORS anywhere.
+  web:
+    build: ./frontend
+    ports: ["5173:80"]
+    depends_on: [api]
+
+volumes:
+  pgdata:

@@ -1,0 +1,91 @@
+# DigitalOcean App Platform spec.
+#
+# Two components plus a managed Postgres, routed on a single origin:
+#   /      -> web (nginx serving the built React SPA)
+#   /api   -> api (FastAPI service)
+# Because the platform does the routing, the browser only ever sees one origin, so
+# there is no CORS configuration in production at all.
+#
+# Deploy:   doctl apps propose --spec .do/app.yaml   # validate + price, spends nothing
+#           doctl apps create   --spec .do/app.yaml --wait
+# Redeploy: doctl apps create-deployment <app-id> --wait
+
+name: job-orchestrator
+region: blr
+
+services:
+  # ------------------------------------------------------------------ API --
+  - name: api
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    instance_count: 1
+    http_port: 8000
+
+    image:
+      registry_type: DOCR
+      repository: jobs-api
+      tag: v1
+
+    # The API's own routes already begin with /api, so the prefix must survive the
+    # platform's routing. Without preserve_path_prefix the app receives /jobs and
+    # every request 404s — a genuinely confusing failure to debug live.
+    routes:
+      - path: /api
+        preserve_path_prefix: true
+
+    health_check:
+      http_path: /healthz
+      initial_delay_seconds: 15
+      period_seconds: 10
+      failure_threshold: 3
+
+    envs:
+      - key: DATABASE_URL
+        # Bound from the managed database below — credentials are never in this file.
+        value: ${jobs-db.DATABASE_URL}
+        scope: RUN_TIME
+      - key: ENV
+        value: production
+        scope: RUN_TIME
+      - key: LOG_LEVEL
+        value: INFO
+        scope: RUN_TIME
+      - key: WORKER_ENABLED
+        # In-process worker keeps this to one deployable. To scale workers
+        # independently, set this false and add a `workers:` component running the
+        # same image — the code needs no change, because nothing is held in memory.
+        value: "true"
+        scope: RUN_TIME
+      - key: DEPENDENCY_FAILURE_RATE
+        value: "0.25"
+        scope: RUN_TIME
+      - key: DB_POOL_MAX
+        # Deliberately small. A managed dev database caps connections, and
+        # instance_count x DB_POOL_MAX is what actually hits that ceiling.
+        value: "5"
+        scope: RUN_TIME
+
+  # ------------------------------------------------------------------ WEB --
+  - name: web
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    instance_count: 1
+    http_port: 80
+
+    image:
+      registry_type: DOCR
+      repository: jobs-web
+      tag: v1
+
+    routes:
+      - path: /
+
+    health_check:
+      http_path: /
+      initial_delay_seconds: 5
+
+databases:
+  - name: jobs-db
+    engine: PG
+    version: "16"
+    # A dev database: cheapest option, fine for a demo. `production: true` provisions
+    # a real managed cluster with backups, PITR and failover.
+    production: false
